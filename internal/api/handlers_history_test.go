@@ -90,3 +90,16 @@ func TestHandleSummarizeProcess_Known(t *testing.T) {
 		t.Errorf("expected process=svc, got %v", out["process"])
 	}
 }
+
+func TestHandleSummarizeProcess_Unknown(t *testing.T) {
+	srv := newTestServer(t)
+	srv.store = history.NewStore(10)
+
+	req := httptest.NewRequest(http.MethodGet, "/summary/process?name=unknown", nil)
+	rec := httptest.NewRecorder()
+	srv.handleSummarizeProcess(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
