@@ -2,58 +2,49 @@ package api
 
 import (
 	"net/http"
-
-	"github.com/user/procwatch/internal/notify"
 )
 
-// handleDedupReset resets deduplication state for a named process or all processes.
-//
-// DELETE /dedup/reset?name=<process>  — reset named process
-// DELETE /dedup/reset                 — reset all
-func handleDedupReset(d *notify.Deduplicator) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		name := r.URL.Query().Get("name")
-		d.Reset(name)
-		if name == "" {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "all dedup state cleared"})
-		} else {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "cleared", "process": name})
-		}
+// handleDedupReset resets deduplication state for all or a named process.
+// POST /dedup/reset?name=<optional>
+func (s *Server) handleDedupReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		s.dedup.Reset("")
+		writeJSON(w, map[string]string{
+			"status":  "reset",
+			"scope":   "all",
+		})
+		return
+	}
+	s.dedup.Reset(name)
+	writeJSON(w, map[string]string{
+		"status":  "reset",
+		"process": name,
+	})
 }
 
-// handleDedupCheck reports whether the next alert for a process+reason would be a duplicate.
-//
-// GET /dedup/check?name=<process>&reason=<reason>
-func handleDedupCheck(d *notify.Deduplicator) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		name := r.URL.Query().Get("name")
-		reason := r.URL.Query().Get("reason")
-		if name == "" || reason == "" {
-			http.Error(w, "name and reason are required", http.StatusBadRequest)
-			return
-		}
-		// Peek without recording: use a shadow dedup to avoid side effects.
-		// We report current state only — callers should not rely on this for logic.
-		type response struct {
-			Process   string `json:"process"`
-			Reason    string `json:"reason"`
-			Duplicate bool   `json:"duplicate"`
-		}
-		// IsDuplicate records the entry on first call; this endpoint is informational.
-		isDup := d.IsDuplicate(name, reason)
-		writeJSON(w, http.StatusOK, response{
-			Process:   name,
-			Reason:    reason,
-			Duplicate: isDup,
-		})
+// handleDedupCheck reports whether an alert for a given process+reason would be suppressed.
+// GET /dedup/check?name=<name>&reason=<reason>
+func (s *Server) handleDedupCheck(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "missing 'name' query parameter", http.StatusBadRequest)
+		return
 	}
+	reason := r.URL.Query().Get("reason")
+	if reason == "" {
+		reason = "unknown"
+	}
+
+	// IsDuplicate does not record — use IsDuplicate for a read-only check.
+	suppressed := s.dedup.IsDuplicate(name, reason)
+	writeJSON(w, map[string]interface{}{
+		"process":    name,
+		"reason":     reason,
+		"suppressed": suppressed,
+	})
 }
